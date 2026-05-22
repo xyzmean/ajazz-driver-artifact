@@ -6,184 +6,138 @@
 
 # English
 
-This repository provides a **100% offline, standalone desktop configuration utility** for the **Ajazz AK980 MAX** mechanical keyboard and other supported Ajazz models. 
+A **100% offline, standalone desktop configuration utility** for the **Ajazz
+AK980 MAX** and other supported Ajazz keyboards. It wraps the original WebHID UI
+into a native Windows app built with **Electron**, enabling local customization
+without an internet connection.
 
-It wraps the original WebHID assets from `https://ajazz.driveall.cn` into a native Windows desktop app built with **Electron**, enabling local customizations without relying on an active internet connection or external servers.
+This is the **`main`** (production) branch — the proven wrapper. It **no longer
+scrapes the vendor site at build time**: the UI snapshot is produced by the
+[`artifact`](#repository-branches) pipeline and consumed here as a pinned
+release.
 
----
+## Repository branches
 
-## 🌟 Key Features
-- **100% Offline-Ready**: All dynamic JS files, localized Russian/English translations, and static keyboard layout images are preloaded and served from local relative directories.
-- **Zero Configuration WebHID**: Custom Electron backend automatically detects and pairs your USB keyboard instantly without showing any browser connection prompts.
-- **Adaptive Layout Scaling**: Launches maximized by default, with custom scale adjustments (`zoomFactor: 0.85`) so elements fit perfectly on laptop displays.
-- **Automated GitHub Actions CI/CD**: You do not have to commit 200MB of static images and bundles to git. GitHub Actions builds the entire offline program from scratch and packages the executable automatically!
+| Branch | Purpose |
+|--------|---------|
+| **`main`** | Production Electron wrapper. Builds from a pinned UI snapshot (`artifact.lock`); no scraping. |
+| **`artifact`** | Upstream tracker: scrapes the vendor site (push + every 3 days), diffs by per-file checksum, publishes a snapshot release, opens an issue and a PR bumping `artifact.lock` here. |
+| **`reverse`** | Our reverse-engineered HID driver (typed protocol layer + model table). |
+| **`dev-tauri`** | Standalone Tauri (Rust + hidapi) + Vue 3 driver, pinned to a `reverse` commit. |
 
----
+## How the snapshot reaches `main`
 
-## ⌨️ Supported Keyboards
+`artifact.lock` pins the exact UI snapshot release this branch builds against:
 
-The utility robustly supports **18 keyboard models**:
-
-*   **AK980 Series:**
-    *   `AJAZZ AK980 MAX` (Tested & Confirmed)
-    *   `AJAZZ AK980 PRO`
-    *   `AJAZZ AK980 PRO 2.4G`
-    *   `AJAZZ AK980 V2 PRO`
-*   **AK820 Series:**
-    *   `AK820`
-    *   `AK820MAX` / `AJAZZ AK820MAX`
-    *   `AK820 MAX Lightles`
-    *   `820PRO`
-*   **AK680 Series:**
-    *   `AJAZZ AK680 MAX`
-    *   `AJAZZ AK680 V2`
-*   **AK870 Series:**
-    *   `AK870MC`
-*   **ALUX Series:**
-    *   `AJAZZ ALUX75 PRO`
-*   **AK0xx Series:**
-    *   `AJAZZ AK029`
-    *   `AJAZZ AK039`
-*   **Other Supported Models:**
-    *   `MJ84+`
-    *   `QS87`
-    *   `CSOL Keyboard`
-
----
-
-## 🤖 Automated CI/CD (GitHub Actions)
-This repository includes a completely automated build workflow:
-1. **Triggers**:
-   - **Weekly Run**: Every Sunday at midnight UTC, GitHub Actions automatically rebuilds the offline app from scratch to fetch the latest assets from the driver CDN.
-   - **On Commit**: Triggered automatically on every new push to `main` or `master` branches.
-   - **Manual Run**: Triggered with a single click via the **"Run workflow"** button in the GitHub Actions tab.
-2. **Build Results**: Once completed, a ZIP archive containing the ready-to-run Windows executable (`AJAZZ Local Driver.exe`) is available for download in the execution summary under **Artifacts**!
-
----
-
-## 🚀 How to Run Locally
-
-### Prerequisites
-1. **Node.js** (v18 or higher)
-2. **Python 3.x**
-
-### 1. Rebuild the Offline Assets
-Run the unified script to scrape, download, analyze relative modules, and patch all URLs locally:
-```bash
-python build_offline.py
+```json
+{ "release_tag": "artifact-YYMMDD-HHMM", "manifest_hash": "…" }
 ```
 
-### 2. Run the Application
-Launch the Electron program in production mode:
+The `artifact` pipeline opens an auto-PR bumping this file when upstream changes;
+merging it triggers a rebuild against that exact snapshot. An empty `release_tag`
+makes CI fall back to the latest `artifact-*` release.
+
+## 🌟 Key features
+- **100% offline**: all JS, translations, and keyboard images are served from local relative paths.
+- **Zero-configuration WebHID**: the Electron backend auto-detects and pairs the USB keyboard — no browser prompts.
+- **Adaptive scaling**: launches maximized with `zoomFactor: 0.85` so the UI fits laptop displays.
+- **Reproducible CI**: builds from a checksum-pinned snapshot, not a live scrape — same input, same output.
+
+## ⌨️ Supported keyboards
+
+AK980 (`MAX`/`PRO`/`PRO 2.4G`/`V2 PRO`), AK820 (`AK820`/`AK820MAX`/`AK820 MAX
+Lightles`/`820PRO`), AK680 (`MAX`/`V2`), `AK870MC`, `ALUX75 PRO`, `AK029`,
+`AK039`, `MJ84+`, `QS87`, `CSOL Keyboard`. The full set tracks the model table
+in the `reverse` branch (`models.json`, 42 entries).
+
+## 🤖 CI/CD (GitHub Actions)
+1. **Triggers**: every push to `main` (including merged `artifact.lock` bumps) and manual **Run workflow**. The periodic upstream check lives in the `artifact` branch, not here.
+2. **Build**: resolves the pinned snapshot → downloads that release → unpacks `app/` → `electron-packager`.
+3. **Result**: a ZIP with `AJAZZ Local Driver.exe`, attached to a release tagged `YYMMDD-HHMM`.
+
+## 🚀 Run locally
+
+Requires **Node.js 18+**. Provide the UI snapshot at `./app` (download a
+`ajazz-ui-*.zip` from an `artifact-*` release and unzip into `app/`, or run the
+`artifact` branch's `build_offline.py`). Then:
+
 ```bash
 npm install
-npm start
+npm start              # production
+npm run start:debug    # with DevTools
+npm run build          # package standalone .exe into dist/
 ```
-*To open the application with Developer Tools enabled for troubleshooting:*
-```bash
-npm run start:debug
-```
-
-### 3. Compile Standalone `.exe`
-Package the application into a standalone portable folder containing `AJAZZ Local Driver.exe` under `dist/`:
-```bash
-npm run build
-```
-
----
 
 > [!IMPORTANT]
-> Make sure your keyboard is connected **strictly via a USB cable** (not over Bluetooth or 2.4GHz wireless) when customizing keymaps, Rapid Trigger settings, and lighting profiles. Standard WebHID communication is only supported over a direct wire.
+> When changing keymaps, Rapid Trigger, and lighting, connect the keyboard
+> **strictly via USB cable** (not Bluetooth or 2.4 GHz). WebHID works only over a
+> direct wire.
 
 ---
 
 # Русский
 
-Репозиторий содержит **100% автономную локальную программу настройки** для механической клавиатуры **Ajazz AK980 MAX** и других поддерживаемых моделей Ajazz.
+**100% автономная локальная программа настройки** для **Ajazz AK980 MAX** и
+других поддерживаемых клавиатур Ajazz. Оборачивает оригинальный WebHID-интерфейс
+в нативное Windows-приложение на **Electron** — настройка без интернета.
 
-Она оборачивает оригинальные WebHID-компоненты с сайта `https://ajazz.driveall.cn` в нативное Windows-приложение на **Electron**, позволяя менять настройки клавиатуры без интернета и внешних серверов.
+Это ветка **`main`** (прод) — проверенная обёртка. Она **больше не парсит сайт
+производителя при сборке**: UI-снапшот готовит пайплайн ветки
+[`artifact`](#ветки-репозитория), а сюда он попадает как запиненный релиз.
 
----
+## Ветки репозитория
+
+| Ветка | Назначение |
+|-------|------------|
+| **`main`** | Прод Electron-обёртка. Собирается из запиненного снапшота (`artifact.lock`), без скрейпа. |
+| **`artifact`** | Трекер апстрима: скрейпит сайт (push + раз в 3 дня), сравнивает по пофайловым суммам, публикует релиз-снапшот, заводит issue и PR с бампом `artifact.lock`. |
+| **`reverse`** | Наш реверс-инжиниринг HID-драйвера (типизированный протокол + таблица моделей). |
+| **`dev-tauri`** | Автономный драйвер на Tauri (Rust + hidapi) + Vue 3, запиненный на коммит `reverse`. |
+
+## Как снапшот попадает в `main`
+
+`artifact.lock` пинит конкретный релиз-снапшот, на котором собирается ветка:
+
+```json
+{ "release_tag": "artifact-ггммдд-ччмм", "manifest_hash": "…" }
+```
+
+Пайплайн `artifact` при изменении апстрима открывает авто-PR с бампом этого
+файла; мерж пересобирает драйвер ровно на этот снапшот. Пустой `release_tag` —
+CI берёт последний релиз `artifact-*`.
 
 ## 🌟 Ключевые особенности
-- **Полный офлайн-режим**: Все динамические JS-файлы, локализованные словари переводов (включая русский и английский языки) и изображения раскладок скачиваются локально.
-- **WebHID без настройки**: Electron-бэкенд автоматически определяет и подключает вашу USB-клавиатуру мгновенно, минуя браузерные всплывающие окна авторизации.
-- **Адаптивный интерфейс**: Программа запускается развернутой на весь экран по умолчанию со специальным масштабированием (`zoomFactor: 0.85`), чтобы все элементы интерфейса и таблицы настроек помещались даже на экранах ноутбуков.
-- **Автоматизация через GitHub Actions**: Вам не нужно заливать в Git сотни мегабайт статичных изображений. GitHub Actions собирает готовый офлайн-установщик с нуля автоматически!
+- **Полный офлайн**: все JS, переводы и изображения раскладок отдаются с локальных относительных путей.
+- **WebHID без настройки**: Electron-бэкенд сам находит и подключает USB-клавиатуру, минуя браузерные окна.
+- **Адаптивный интерфейс**: запуск развёрнутым, `zoomFactor: 0.85` для экранов ноутбуков.
+- **Воспроизводимая сборка**: из запиненного по контрольной сумме снапшота, а не из живого скрейпа.
 
----
+## ⌨️ Поддерживаемые клавиатуры
 
-## ⌨️ Список поддерживаемых клавиатур
+AK980 (`MAX`/`PRO`/`PRO 2.4G`/`V2 PRO`), AK820 (`AK820`/`AK820MAX`/`AK820 MAX
+Lightles`/`820PRO`), AK680 (`MAX`/`V2`), `AK870MC`, `ALUX75 PRO`, `AK029`,
+`AK039`, `MJ84+`, `QS87`, `CSOL Keyboard`. Полный список соответствует таблице
+моделей в ветке `reverse` (`models.json`, 42 записи).
 
-Утилита полностью поддерживает **18 моделей клавиатур**:
+## 🤖 Сборка (GitHub Actions)
+1. **Триггеры**: каждый push в `main` (включая мерж бампа `artifact.lock`) и ручной запуск. Периодическая проверка апстрима — в ветке `artifact`, не здесь.
+2. **Сборка**: резолвит запиненный снапшот → качает релиз → распаковывает `app/` → `electron-packager`.
+3. **Результат**: ZIP с `AJAZZ Local Driver.exe` в релизе с тегом `ггммдд-ччмм`.
 
-*   **Серия AK980:**
-    *   `AJAZZ AK980 MAX` (Проверено и работает)
-    *   `AJAZZ AK980 PRO`
-    *   `AJAZZ AK980 PRO 2.4G`
-    *   `AJAZZ AK980 V2 PRO`
-*   **Серия AK820:**
-    *   `AK820`
-    *   `AK820MAX` / `AJAZZ AK820MAX`
-    *   `AK820 MAX Lightles`
-    *   `820PRO`
-*   **Серия AK680:**
-    *   `AJAZZ AK680 MAX`
-    *   `AJAZZ AK680 V2`
-*   **Серия AK870:**
-    *   `AK870MC`
-*   **Серия ALUX:**
-    *   `AJAZZ ALUX75 PRO`
-*   **Серия AK0xx:**
-    *   `AJAZZ AK029`
-    *   `AJAZZ AK039`
-*   **Другие поддерживаемые модели:**
-    *   `MJ84+`
-    *   `QS87`
-    *   `CSOL Keyboard`
+## 🚀 Локальный запуск
 
----
+Нужен **Node.js 18+**. Положите UI-снапшот в `./app` (скачайте `ajazz-ui-*.zip`
+из релиза `artifact-*` и распакуйте в `app/`, либо запустите `build_offline.py`
+из ветки `artifact`). Затем:
 
-## 🤖 Автоматическая сборка (GitHub Actions)
-В репозитории настроен полностью автоматический рабочий процесс (CI/CD):
-1. **Триггеры сборки**:
-   - **Раз в неделю**: Каждое воскресенье в полночь по UTC GitHub Actions автоматически пересобирает драйвер, чтобы загрузить самые свежие ассеты с CDN производителя.
-   - **При каждом коммите**: Автоматическая сборка запускается при любом `push` в ветки `main` или `master`.
-   - **Вручную**: Сборку можно запустить в один клик в разделе **Actions** -> **"Build Offline Electron Driver"** -> **"Run workflow"**.
-2. **Результат сборки**: После завершения процесса готовый ZIP-архив с портативной сборкой (`AJAZZ Local Driver.exe`) будет доступен для скачивания прямо в результатах запуска в разделе **Artifacts**!
-
----
-
-## 🚀 Как запустить локально
-
-### Требования
-1. **Node.js** (версии 18 или выше)
-2. **Python 3.x**
-
-### 1. Пересборка офлайн-ассетов
-Запустите скрипт для парсинга, скачивания динамических модулей и локального патчинга путей:
-```bash
-python build_offline.py
-```
-
-### 2. Запуск приложения
-Запуск Electron в рабочем режиме:
 ```bash
 npm install
-npm start
+npm start              # рабочий режим
+npm run start:debug    # с DevTools
+npm run build          # портативный .exe в dist/
 ```
-*Для запуска с панелью разработчика (DevTools) для отладки:*
-```bash
-npm run start:debug
-```
-
-### 3. Сборка портативного `.exe`
-Упаковка приложения в единую переносимую папку с файлом `AJAZZ Local Driver.exe` в директории `dist/`:
-```bash
-npm run build
-```
-
----
 
 > [!IMPORTANT]
-> Для изменения раскладки, настроек Rapid Trigger и профилей подсветки клавиатура **должна быть обязательно подключена через USB-кабель** (не по Bluetooth и не по беспроводному адаптеру 2.4GHz). Передача команд по технологии WebHID поддерживается только по прямому проводу.
+> Для смены раскладки, Rapid Trigger и подсветки подключайте клавиатуру
+> **строго по USB-кабелю** (не Bluetooth и не 2.4 ГГц). WebHID работает только по
+> прямому проводу.

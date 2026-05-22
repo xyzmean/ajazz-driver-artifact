@@ -1,0 +1,7 @@
+{
+  "release_tag": "",
+  "manifest_hash": "",
+  "count": 0,
+  "updated": "",
+  "_note": "Pinned by the artifact pipeline via auto-PR. Empty release_tag means the build falls back to the latest artifact-* release."
+}

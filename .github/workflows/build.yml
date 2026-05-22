@@ -5,30 +5,48 @@ on:
     branches:
       - main
       - master
-  schedule:
-    - cron: '0 0 * * 0' # Run once a week on Sunday at midnight UTC
-  workflow_dispatch: # Enable manual triggering with a single click in GitHub Actions tab
+    # artifact.lock bumps (auto-PR from the artifact pipeline) land here on merge
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     name: Build & Package Windows Standalone Driver
     runs-on: windows-latest
-    permissions:
-      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Run offline builder script
+      - name: Resolve pinned artifact release
+        id: pin
+        shell: bash
         run: |
-          python build_offline.py
-        # This will download all JS modules, translations, and keyboard layout images from the server and patch relative paths.
+          tag=$(python -c 'import json;print(json.load(open("artifact.lock")).get("release_tag",""))')
+          if [ -z "$tag" ]; then
+            echo "artifact.lock has no release_tag; using latest artifact-* release"
+            tag=$(gh release list --limit 100 --json tagName \
+                  --jq '[.[] | select(.tagName | startswith("artifact-"))] | .[0].tagName')
+          fi
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            echo "::error::No artifact-* release found. Run the artifact pipeline first."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Using artifact release: $tag"
+
+      - name: Download UI snapshot from the artifact release
+        shell: bash
+        run: |
+          gh release download "${{ steps.pin.outputs.tag }}" --pattern '*.zip' --dir .
+          mkdir -p app
+          unzip -q -o ajazz-ui-*.zip -d app
+          test -f app/index.html || { echo "::error::snapshot missing index.html"; exit 1; }
+          echo "Unpacked $(find app -type f | wc -l) files into app/"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -38,33 +56,24 @@ jobs:
           cache-dependency-path: package.json
 
       - name: Install dependencies
-        run: |
-          npm install
+        run: npm install
 
       - name: Package Electron application
-        run: |
-          npx electron-packager . "AJAZZ Local Driver" --platform=win32 --arch=x64 --out=dist --overwrite
+        run: npx electron-packager . "AJAZZ Local Driver" --platform=win32 --arch=x64 --out=dist --overwrite
 
       - name: Compress packaged build into ZIP
         shell: pwsh
-        run: |
-          Compress-Archive -Path dist\"AJAZZ Local Driver-win32-x64"\* -DestinationPath ajazz-local-driver.zip
-
-      - name: Upload compiled binary as Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ajazz-local-driver-windows
-          path: ajazz-local-driver.zip
-          retention-days: 30
+        run: Compress-Archive -Path dist\"AJAZZ Local Driver-win32-x64"\* -DestinationPath ajazz-local-driver.zip
 
       - name: Compute release tag (YYMMDD-HHMM, UTC)
         id: tag
         shell: pwsh
         run: echo "tag=$((Get-Date).ToUniversalTime().ToString('yyMMdd-HHmm'))" >> $env:GITHUB_OUTPUT
 
-      - name: Publish artifact to GitHub Release
+      - name: Publish driver to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
           files: ajazz-local-driver.zip
+          body: "Offline Electron driver built from artifact snapshot ${{ steps.pin.outputs.tag }}."
