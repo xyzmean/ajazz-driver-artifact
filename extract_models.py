@@ -12,7 +12,29 @@ import glob
 import json
 import re
 
-LD = sorted(glob.glob("../app/assets/layout-default-*.js"))[0]
+import os
+import sys
+
+# Locate the layout-default chunk. Order: explicit arg/env, then the scraped
+# snapshot wherever it lives (artifact pipeline drops it under ./app or ../app).
+def _find_layout_default():
+    explicit = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("LAYOUT_DEFAULT")
+    if explicit:
+        return explicit
+    for pattern in (
+        "app/assets/layout-default-*.js",
+        "../app/assets/layout-default-*.js",
+        "**/assets/layout-default-*.js",
+    ):
+        hits = sorted(glob.glob(pattern, recursive=True))
+        if hits:
+            return hits[0]
+    sys.exit(
+        "layout-default-*.js not found. Pass a path as argv[1] or set "
+        "LAYOUT_DEFAULT, or place the scraped snapshot under ./app or ../app."
+    )
+
+LD = _find_layout_default()
 src = open(LD, encoding="utf-8").read()
 
 # Find every "{vendorId:NNN,productId:NNN,...}" object and slice out a window
@@ -83,5 +105,10 @@ export function findModel(vendorId: number, productId: number): KeyboardModel | 
 }}
 """
 open("src/protocol/models.ts", "w", encoding="utf-8").write(ts)
-print(f"Wrote {len(rows)} models to src/protocol/models.ts")
+
+# Canonical machine-readable table consumed by downstream builds (e.g. the
+# Tauri app pins this file by the commit it was generated at).
+open("models.json", "w", encoding="utf-8").write(body + "\n")
+
+print(f"Wrote {len(rows)} models to src/protocol/models.ts and models.json")
 print("Sample:", ", ".join(sorted({r["name"] for r in rows})[:12]))

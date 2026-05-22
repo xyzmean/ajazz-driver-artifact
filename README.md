@@ -1,189 +1,138 @@
-# ⌨️ AJAZZ Offline Desktop Driver / Офлайн-драйвер AJAZZ (Electron)
+# reverse — реверс-код драйвера Ajazz
 
-[English](#english) | [Русский](#русский)
+Ветка **`reverse`**: цель — **владеть HID-протоколом клавиатур Ajazz**
+независимо от апстрим-бандла. Это *настоящий порт* — документированный
+типизированный слой протокола, поверх которого можно строить любой фронтенд
+(web, CLI, Tauri, кроссплатформенный) без зависимости от минифицированного
+апстрим-бандла, который непредсказуемо переминифицируется при каждой пересборке.
 
----
+> **Связь с другими ветками.** `models.json` (и слой протокола) — канонический
+> источник для ветки **`dev-tauri`**: её CI пинит конкретный коммит этой ветки
+> (файл `.reverse-rev`) и копирует `models.json`. UI-снапшот (`./app/`) сюда
+> не коммитится — его поставляет пайплайн ветки **`artifact`**.
 
-# English
+## Структура
 
-This repository provides a **100% offline, standalone desktop configuration utility** for the **Ajazz AK980 MAX** mechanical keyboard and other supported Ajazz models. 
-
-It wraps the original WebHID assets from `https://ajazz.driveall.cn` into a native Windows desktop app built with **Electron**, enabling local customizations without relying on an active internet connection or external servers.
-
----
-
-## 🌟 Key Features
-- **100% Offline-Ready**: All dynamic JS files, localized Russian/English translations, and static keyboard layout images are preloaded and served from local relative directories.
-- **Zero Configuration WebHID**: Custom Electron backend automatically detects and pairs your USB keyboard instantly without showing any browser connection prompts.
-- **Adaptive Layout Scaling**: Launches maximized by default, with custom scale adjustments (`zoomFactor: 0.85`) so elements fit perfectly on laptop displays.
-- **Automated GitHub Actions CI/CD**: You do not have to commit 200MB of static images and bundles to git. GitHub Actions builds the entire offline program from scratch and packages the executable automatically!
-
----
-
-## ⌨️ Supported Keyboards
-
-The utility robustly supports **18 keyboard models**:
-
-*   **AK980 Series:**
-    *   `AJAZZ AK980 MAX` (Tested & Confirmed)
-    *   `AJAZZ AK980 PRO`
-    *   `AJAZZ AK980 PRO 2.4G`
-    *   `AJAZZ AK980 V2 PRO`
-*   **AK820 Series:**
-    *   `AK820`
-    *   `AK820MAX` / `AJAZZ AK820MAX`
-    *   `AK820 MAX Lightles`
-    *   `820PRO`
-*   **AK680 Series:**
-    *   `AJAZZ AK680 MAX`
-    *   `AJAZZ AK680 V2`
-*   **AK870 Series:**
-    *   `AK870MC`
-*   **ALUX Series:**
-    *   `AJAZZ ALUX75 PRO`
-*   **AK0xx Series:**
-    *   `AJAZZ AK029`
-    *   `AJAZZ AK039`
-*   **Other Supported Models:**
-    *   `MJ84+`
-    *   `QS87`
-    *   `CSOL Keyboard`
-
----
-
-## 🤖 Automated CI/CD (GitHub Actions)
-This repository includes a completely automated build workflow:
-1. **Triggers**:
-   - **Weekly Run**: Every Sunday at midnight UTC, GitHub Actions automatically rebuilds the offline app from scratch to fetch the latest assets from the driver CDN.
-   - **On Commit**: Triggered automatically on every new push to `main` or `master` branches.
-   - **Manual Run**: Triggered with a single click via the **"Run workflow"** button in the GitHub Actions tab.
-2. **Build Results**: Once completed, a ZIP archive containing the ready-to-run Windows executable (`AJAZZ Local Driver.exe`) is available for download in the execution summary under **Artifacts**!
-
----
-
-## 🚀 How to Run Locally
-
-### Prerequisites
-1. **Node.js** (v18 or higher)
-2. **Python 3.x**
-
-### 1. Rebuild the Offline Assets
-Run the unified script to scrape, download, analyze relative modules, and patch all URLs locally:
-```bash
-python build_offline.py
+```
+reverse/
+├── package.json / tsconfig.json   тулинг сборки (tsc → dist/)
+├── extract_models.py              регенерирует src/protocol/models.ts + models.json из бандла
+├── models.json                    канонич. таблица моделей (потребляется dev-tauri)
+├── index.core.min.js              дословная копия app/assets/index-*.js (ядро 47 КБ)
+├── index.core.pretty.js           то же через Prettier (2545 строк) — для справки
+└── src/
+    ├── main.ts                    Electron-хост: отдаёт СУЩЕСТВУЮЩИЙ UI из ./app, авто-грант WebHID,
+    │                              инжектит наш протокол в страницу после загрузки
+    ├── web/inject.ts              браузерный инжект: вешает протокол на window.ReverseDriver
+    │                              + плавающая панель, читающая устройство НАШИМ кодом
+    └── protocol/
+        ├── core.ts                константы, enum CMD, сборка/разбор кадра, чанк-транспорт
+        ├── commands.ts            кодеры/декодеры по фичам (device info, game mode, клавиши, LED, RT, сброс)
+        ├── models.ts              таблица из 42 моделей (авто-генерация)
+        └── index.ts               баррель
 ```
 
-### 2. Run the Application
-Launch the Electron program in production mode:
+## Подключение протокола к UI
+
+`main.ts` после `did-finish-load` инжектит собранный esbuild'ом `dist-web/inject.js`
+в главный мир страницы. Это:
+- вешает весь протокол на `window.ReverseDriver` (доступно из DevTools);
+- монтирует плавающую панель «Reverse Driver» — кнопка читает подключённое
+  устройство **нашим** `getDeviceInfo` и определяет модель по vid/pid через `findModel`,
+  параллельно с апстрим-UI.
+
+Так наш реверс-код реально работает с железом внутри существующего интерфейса.
+Оговорка: и апстрим-бандл, и наш код используют одно и то же HID-устройство —
+панель читает по нажатию (низкий риск гонки), но одновременная активная запись
+из обоих источников нежелательна.
+
+## Сборка и запуск
+
 ```bash
 npm install
-npm start
-```
-*To open the application with Developer Tools enabled for troubleshooting:*
-```bash
-npm run start:debug
-```
-
-### 3. Compile Standalone `.exe`
-Package the application into a standalone portable folder containing `AJAZZ Local Driver.exe` under `dist/`:
-```bash
-npm run build
+npm run build          # tsc → dist/   (это и есть «сборка»)
+npm start              # сборка + запуск Electron (использует UI из ./app)
+npm run package        # отдельный Windows .exe через electron-packager
+npm run extract:models # перегенерировать models.ts + models.json после пересборки апстрима
 ```
 
----
+`extract:models` ищет `layout-default-*.js` в `./app` или `../app`; путь можно
+задать явно: `python3 extract_models.py path/to/layout-default-XXXX.js`.
 
-> [!IMPORTANT]
-> Make sure your keyboard is connected **strictly via a USB cable** (not over Bluetooth or 2.4GHz wireless) when customizing keymaps, Rapid Trigger settings, and lighting profiles. Standard WebHID communication is only supported over a direct wire.
+## Методология
 
----
+1. **Sourcemaps проверены — их нет.** На любой запрос `*.js.map` CDN отдаёт
+   SPA-заглушку `index.html` (896 байт, `content-type: text/html`) — «мягкий» 200,
+   а не настоящий мап. Поэтому исходник реконструируется из минифицированного кода,
+   а не восстанавливается из мапов.
+2. **Prettier** — чтобы сделать минифицированный чанк навигируемым.
+3. **Финальный блок `export {…}` апстрима — розеттский камень.** Он сопоставляет
+   каждый минифицированный символ человеческому имени (см. таблицу ниже). Вместе с
+   enum'ом имён команд и китайскими debug-строками (пережили минификацию) протокол
+   читается почти напрямую.
 
-# Русский
+## Формат кадра (полная спецификация — в шапке `core.ts`)
 
-Репозиторий содержит **100% автономную локальную программу настройки** для механической клавиатуры **Ajazz AK980 MAX** и других поддерживаемых моделей Ajazz.
+- WebHID, report ID `0`. Длина репорта берётся из дескриптора устройства (по умолчанию 32 байта).
+- Magic запроса `0xAA`, ответа `0x55`. Заголовок 8 байт; payload с байта 8.
+- Адрес — little-endian в байтах [3..4]. Многобайтные передачи чанкуются
+  (`ceil(contentSize / (reportSize - 8))` пакетов) с ретраями и таймаутом на каждый пакет.
+- **Универсальной контрольной суммы нет** — несколько команд (например, `SET_MUSIC_DATA`)
+  добавляют свою в последний байт; это относится к самим командам, а не к транспорту.
 
-Она оборачивает оригинальные WebHID-компоненты с сайта `https://ajazz.driveall.cn` в нативное Windows-приложение на **Electron**, позволяя менять настройки клавиатуры без интернета и внешних серверов.
+## Карта символов (минифицированное → смысл)
 
----
+Пере-выводить после каждой пересборки апстрима — имена меняются.
 
-## 🌟 Ключевые особенности
-- **Полный офлайн-режим**: Все динамические JS-файлы, локализованные словари переводов (включая русский и английский языки) и изображения раскладок скачиваются локально.
-- **WebHID без настройки**: Electron-бэкенд автоматически определяет и подключает вашу USB-клавиатуру мгновенно, минуя браузерные всплывающие окна авторизации.
-- **Адаптивный интерфейс**: Программа запускается развернутой на весь экран по умолчанию со специальным масштабированием (`zoomFactor: 0.85`), чтобы все элементы интерфейса и таблицы настроек помещались даже на экранах ноутбуков.
-- **Автоматизация через GitHub Actions**: Вам не нужно заливать в Git сотни мегабайт статичных изображений. GitHub Actions собирает готовый офлайн-установщик с нуля автоматически!
+| Мин | Имя | | Мин | Имя |
+|-----|-----|-|-----|-----|
+| `E` | `CMD` (enum опкодов) | | `C` | `readDataChunks` (транспорт) |
+| `pe` | `FACTORY_RESET_TYPE` | | `P` | сборщик пакета (внутр.) |
+| `He` | `deviceInit` | | `Pe` | парсер ответа (внутр.) |
+| `Ce` | `getDeviceInfo` | | `j` | матчер ответа (внутр.) |
+| `Re` | `getGameMode` | | `z` | открытие устройства (внутр.) |
+| `Ne` | `getKeyData` | | `qe` | `setGameMode` |
+| `Ue` | `getLEDEffect` | | `lt` | `setKeyData` |
+| `ke` | `getCustomLEDData` | | `mt` | `setLEDEffect` |
+| `be` | `getLightBox` | | `dt` | `setCustomLEDData` |
+| `Ge` | `getMacroData` | | `yt` | `setLightBox` |
+| `Fe` | `getMagneticAxisRT` | | `ht` | `setMacroData` |
+| `Ve` | `getMagneticAxisDKSData` | | `Dt` | `setMagneticAxisRT` |
+| `ve` | `getFnKeyData` | | `It` | `setMagneticAxisDKSData` |
+| `Ke` | `getDefaultFnKeyMatrix` | | `ft` | `setFnKeyData` |
+| `it` | `getSingleKeyData` | | `Ae` | `factoryReset` |
+| `ut` | `getFnSingleKeyData` | | `ct` | `resetAll` |
+| `ot` | `getMagneticAxisStatus` | | `st` | `clearCalibration` |
+| `gt`/`pt`/`St` | `getAllLightsRGB[24G][64Byte]` | | `Lt` | `clearLedData` |
+| `Qe`/`tt` | `startCalibration[V2]` | | `Tt`/`_t` | `setMusicData[V1]` |
+| `et`/`rt` | `stopCalibration[V2]` | | `Et` | `setGifLighting` |
+| `nt`/`at` | `start/stopSimulationTest` | | `At` | `setDotMatrixMode` |
+| `We` | `startResetListener` | | `Mt` | `setLedSyncAnimation` |
+| `vt` | `startDeviceStateListener` | | `wt` | `setLedUserAnimation` |
+| `Je`/`Ze`/`je` | слушатели 24G disconnect/sleep/wake | | `Ct` | `setLedDateTime` |
+| | | | `Ot`/`Nt`/`Kt`/`Rt` | `setTft*` (builtIn/dateTime/screenInfo/userAnimation) |
 
----
+## Статус
 
-## ⌨️ Список поддерживаемых клавиатур
-
-Утилита полностью поддерживает **18 моделей клавиатур**:
-
-*   **Серия AK980:**
-    *   `AJAZZ AK980 MAX` (Проверено и работает)
-    *   `AJAZZ AK980 PRO`
-    *   `AJAZZ AK980 PRO 2.4G`
-    *   `AJAZZ AK980 V2 PRO`
-*   **Серия AK820:**
-    *   `AK820`
-    *   `AK820MAX` / `AJAZZ AK820MAX`
-    *   `AK820 MAX Lightles`
-    *   `820PRO`
-*   **Серия AK680:**
-    *   `AJAZZ AK680 MAX`
-    *   `AJAZZ AK680 V2`
-*   **Серия AK870:**
-    *   `AK870MC`
-*   **Серия ALUX:**
-    *   `AJAZZ ALUX75 PRO`
-*   **Серия AK0xx:**
-    *   `AJAZZ AK029`
-    *   `AJAZZ AK039`
-*   **Другие поддерживаемые модели:**
-    *   `MJ84+`
-    *   `QS87`
-    *   `CSOL Keyboard`
-
----
-
-## 🤖 Автоматическая сборка (GitHub Actions)
-В репозитории настроен полностью автоматический рабочий процесс (CI/CD):
-1. **Триггеры сборки**:
-   - **Раз в неделю**: Каждое воскресенье в полночь по UTC GitHub Actions автоматически пересобирает драйвер, чтобы загрузить самые свежие ассеты с CDN производителя.
-   - **При каждом коммите**: Автоматическая сборка запускается при любом `push` в ветки `main` или `master`.
-   - **Вручную**: Сборку можно запустить в один клик в разделе **Actions** -> **"Build Offline Electron Driver"** -> **"Run workflow"**.
-2. **Результат сборки**: После завершения процесса готовый ZIP-архив с портативной сборкой (`AJAZZ Local Driver.exe`) будет доступен для скачивания прямо в результатах запуска в разделе **Artifacts**!
-
----
-
-## 🚀 Как запустить локально
-
-### Требования
-1. **Node.js** (версии 18 или выше)
-2. **Python 3.x**
-
-### 1. Пересборка офлайн-ассетов
-Запустите скрипт для парсинга, скачивания динамических модулей и локального патчинга путей:
-```bash
-python build_offline.py
+- [x] Проверено наличие sourcemaps (их нет)
+- [x] Ядро деминифицировано в читаемый вид
+- [x] `core.ts`: константы, enum'ы `CMD`/`FactoryResetType`, сборка/разбор кадра,
+      чанк-транспорт, матчер ответа, открытие устройства, рабочий пример `getDeviceInfo`
+- [x] `commands.ts`: кодеры/декодеры для game mode, раскладки (raw), LED-эффекта,
+      Rapid Trigger (магнитная ось), factory reset, парсинга калибровки
+- [x] `models.ts`: таблица из 42 моделей (vendorId/productId/connectType/routesName/keyboardImg)
+- [x] Electron-хост (`main.ts`) — **компилируется чисто (tsc) и стартует**: отдаёт
+      существующий UI, локальный сервер поднимается, path-traversal guard проверен
+- [x] Протокол подключён к UI: `dist-web/inject.js` инжектится в страницу,
+      `window.ReverseDriver` доступен, панель смонтирована (проверено: `navigator.hid` на месте)
+- [ ] Оставшиеся команды: макросы, custom LED data, FN-клавиши, DKS, TFT/анимации, музыка
+- [ ] Маппинг раскладки (raw-записи → подписи клавиш по модели)
+- [ ] Перехват HID-вызовов апстрим-бандла на наш протокол (вместо параллельной работы)
+- [ ] Свой фронтенд вместо апстрим-UI; кроссплатформенная упаковка
 ```
 
-### 2. Запуск приложения
-Запуск Electron в рабочем режиме:
-```bash
-npm install
-npm start
-```
-*Для запуска с панелью разработчика (DevTools) для отладки:*
-```bash
-npm run start:debug
-```
+## Оговорка по безопасности
 
-### 3. Сборка портативного `.exe`
-Упаковка приложения в единую переносимую папку с файлом `AJAZZ Local Driver.exe` в директории `dist/`:
-```bash
-npm run build
-```
-
----
-
-> [!IMPORTANT]
-> Для изменения раскладки, настроек Rapid Trigger и профилей подсветки клавиатура **должна быть обязательно подключена через USB-кабель** (не по Bluetooth и не по беспроводному адаптеру 2.4GHz). Передача команд по технологии WebHID поддерживается только по прямому проводу.
+`webSecurity: false` и сплошной авто-грант WebHID унаследованы из оригинальной
+обёртки и оставлены сознательно (нужны для WebHID + локального кэша). Весь
+обслуживаемый контент локальный и доверенный, но это осознанный компромисс.
