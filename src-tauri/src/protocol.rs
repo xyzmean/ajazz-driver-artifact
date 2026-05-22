@@ -24,8 +24,10 @@ pub mod cmd {
     pub const GET_GAME_MODE: u8 = 17;
     pub const GET_KEY: u8 = 18;
     pub const GET_LED_EFFECT: u8 = 19;
+    pub const GET_MAGNETIC_AXIS_RT: u8 = 23;
     pub const SET_GAME_MODE: u8 = 33;
     pub const SET_LED_EFFECT: u8 = 35;
+    pub const SET_MAGNETIC_AXIS_RT: u8 = 39;
     pub const SET_FACTORY_RESET: u8 = 15;
 }
 
@@ -137,4 +139,193 @@ pub fn parse_device_info(e: &[u8]) -> DeviceInfo {
 pub fn get_device_info(device: &HidDevice) -> Result<DeviceInfo, String> {
     let payload = read_data(device, cmd::GET_DEVICE_INFO, 48, 500)?;
     Ok(parse_device_info(&payload))
+}
+
+/// Chunked write transport.
+/// Splits `data` into packets of 24 bytes, sends each, and awaits a matching response confirmation.
+pub fn write_data(device: &HidDevice, command: u8, data: &[u8], timeout_ms: i32) -> Result<(), String> {
+    let content_size = data.len();
+    let per_packet = REPORT_SIZE - HEADER_SIZE; // 24
+    let packet_count = content_size.div_ceil(per_packet);
+
+    for i in 0..packet_count {
+        let addr = (i * per_packet) as u16;
+        let from = i * per_packet;
+        let to = (from + per_packet).min(content_size);
+        let chunk = &data[from..to];
+        let len = chunk.len() as u8;
+        let last = i == packet_count - 1;
+
+        let packet = build_packet(command, len, addr, Some(chunk), last);
+        send(device, &packet)?;
+        // Await confirmation response
+        let _resp = recv(device, command, timeout_ms)?;
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GameMode {
+    pub game_mode: u8,
+    pub fn_switch: u8,
+    pub sleep_time: u8,
+    pub key_delay: u8,
+    pub report_rate: u8,
+    pub system_mode: u8,
+    pub tft_display_time: u8,
+    pub top_dead_zone: f32,    // saved as value * 100 on wire
+    pub bottom_dead_zone: f32, // saved as value * 100 on wire
+    pub stability_mode: u8,
+    pub auto_calibration: u8,
+    pub single_key_wakeup: u8,
+}
+
+pub fn parse_game_mode(e: &[u8]) -> GameMode {
+    GameMode {
+        game_mode: e[1],
+        fn_switch: e[2],
+        sleep_time: e[3],
+        key_delay: e[4],
+        report_rate: e[5],
+        system_mode: e[6],
+        tft_display_time: e[7],
+        top_dead_zone: (e[8] as f32) / 100.0,
+        bottom_dead_zone: (e[9] as f32) / 100.0,
+        stability_mode: e[11],
+        auto_calibration: e[14],
+        single_key_wakeup: e[15],
+    }
+}
+
+pub fn encode_game_mode(v: &GameMode) -> [u8; 56] {
+    let mut e = [0u8; 56];
+    e[1] = v.game_mode;
+    e[2] = v.fn_switch;
+    e[3] = v.sleep_time;
+    e[4] = v.key_delay;
+    e[5] = v.report_rate;
+    e[6] = v.system_mode;
+    e[7] = v.tft_display_time;
+    e[8] = (v.top_dead_zone * 100.0).round() as u8;
+    e[9] = (v.bottom_dead_zone * 100.0).round() as u8;
+    e[11] = v.stability_mode;
+    e[14] = v.auto_calibration;
+    e[15] = v.single_key_wakeup;
+    e
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LedEffect {
+    pub mode: u8,
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub driver_setting: u8,
+    pub secondary_red: u8,
+    pub secondary_green: u8,
+    pub secondary_blue: u8,
+    pub color_mode: u8,
+    pub brightness: u8,
+    pub speed: u8,
+    pub direction: u8,
+    pub effect_mode_type: u8,
+}
+
+pub fn parse_led_effect(e: &[u8]) -> LedEffect {
+    LedEffect {
+        mode: e[0],
+        red: e[1],
+        green: e[2],
+        blue: e[3],
+        driver_setting: e[4],
+        secondary_red: e[5],
+        secondary_green: e[6],
+        secondary_blue: e[7],
+        color_mode: e[8],
+        brightness: e[9],
+        speed: e[10],
+        direction: e[11],
+        effect_mode_type: e[12],
+    }
+}
+
+pub fn encode_led_effect(v: &LedEffect) -> [u8; 16] {
+    let mut e = [0u8; 16];
+    e[0] = v.mode;
+    e[1] = v.red;
+    e[2] = v.green;
+    e[3] = v.blue;
+    e[4] = 255; // driverSetting forced to 255 by upstream
+    e[5] = v.secondary_red;
+    e[6] = v.secondary_green;
+    e[7] = v.secondary_blue;
+    e[8] = v.color_mode;
+    e[9] = v.brightness;
+    e[10] = v.speed;
+    e[11] = v.direction;
+    e[12] = v.effect_mode_type;
+    e
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MagneticAxisRT {
+    pub axis_type: u8,
+    pub is_whole_fast: bool,
+    pub is_rampage_mode: bool,
+    pub trigger_key_stroke: f32,
+    pub press_rt: f32,
+    pub release_rt: f32,
+}
+
+pub fn parse_magnetic_rt(e: &[u8], rt_precision: u8) -> Vec<MagneticAxisRT> {
+    let rt_scale = if rt_precision > 0 { 1000.0 } else { 100.0 };
+    let stroke_scale = if rt_precision == 2 { 1000.0 } else { 100.0 };
+    let mut out = Vec::with_capacity(128);
+    for i in 0..128 {
+        let b = i * 8;
+        let flags = e[b + 1];
+        let trigger_key_stroke = ((e[b + 2] as u16 | ((e[b + 3] as u16) << 8)) as f32) / stroke_scale;
+        let press_rt = ((e[b + 4] as u16 | ((e[b + 5] as u16) << 8)) as f32) / rt_scale;
+        let release_rt = ((e[b + 6] as u16 | ((e[b + 7] as u16) << 8)) as f32) / rt_scale;
+        out.push(MagneticAxisRT {
+            axis_type: e[b],
+            is_whole_fast: (flags & 1) != 0,
+            is_rampage_mode: (flags & 2) != 0,
+            trigger_key_stroke,
+            press_rt,
+            release_rt,
+        });
+    }
+    out
+}
+
+pub fn encode_magnetic_rt(v: &[MagneticAxisRT], rt_precision: u8) -> [u8; 1024] {
+    let rt_scale = if rt_precision > 0 { 1000.0 } else { 100.0 };
+    let stroke_scale = if rt_precision == 2 { 1000.0 } else { 100.0 };
+    let mut e = [0u8; 1024];
+    for i in 0..128.min(v.len()) {
+        let b = i * 8;
+        let item = &v[i];
+        e[b] = item.axis_type;
+        let mut flags = 0u8;
+        if item.is_whole_fast { flags |= 1; }
+        if item.is_rampage_mode { flags |= 2; }
+        e[b + 1] = flags;
+        
+        let stroke = (item.trigger_key_stroke * stroke_scale).round() as u16;
+        e[b + 2] = (stroke & 0xFF) as u8;
+        e[b + 3] = ((stroke >> 8) & 0xFF) as u8;
+        
+        let press = (item.press_rt * rt_scale).round() as u16;
+        e[b + 4] = (press & 0xFF) as u8;
+        e[b + 5] = ((press >> 8) & 0xFF) as u8;
+        
+        let release = (item.release_rt * rt_scale).round() as u16;
+        e[b + 6] = (release & 0xFF) as u8;
+        e[b + 7] = ((release >> 8) & 0xFF) as u8;
+    }
+    e
 }

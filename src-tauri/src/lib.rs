@@ -14,7 +14,15 @@ pub fn run() {
         .manage(AppState { api: Mutex::new(api) })
         .invoke_handler(tauri::generate_handler![
             commands::list_devices,
-            commands::get_device_info
+            commands::get_device_info,
+            commands::open_settings_window,
+            commands::get_game_mode,
+            commands::set_game_mode,
+            commands::get_led_effect,
+            commands::set_led_effect,
+            commands::get_magnetic_rt,
+            commands::set_magnetic_rt,
+            commands::factory_reset
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
