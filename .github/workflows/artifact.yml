@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: '0 3 */3 * *'   # every 3 days, 03:00 UTC
   workflow_dispatch:
+    inputs:
+      force_vertex:
+        description: 'Run the Vertex protocol re-derivation even if the bundle is unchanged (test the GCP wiring; no release/issue is published).'
+        type: boolean
+        default: false
 
 concurrency:
   group: artifact-tracker
@@ -179,13 +184,18 @@ jobs:
       # ---- Vertex AI protocol re-derivation (only when the core bundle changed) ----
 
       - name: Detect core bundle change vs reverse
-        if: steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.changed == 'true' || github.event.inputs.force_vertex == 'true'
         id: core
         run: |
           new_core=$(ls -S "$GITHUB_WORKSPACE"/app/assets/index-*.js 2>/dev/null | head -1)
           git fetch origin reverse
           git show origin/reverse:index.core.min.js > /tmp/old.core.min.js 2>/dev/null || : > /tmp/old.core.min.js
-          if [ -n "$new_core" ] && ! cmp -s "$new_core" /tmp/old.core.min.js; then
+          forced="${{ github.event.inputs.force_vertex }}"
+          if [ "$forced" = "true" ] && [ -n "$new_core" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "new_core=$new_core" >> "$GITHUB_OUTPUT"
+            echo "force_vertex: running Vertex on $new_core (no release/PR unless code actually differs)."
+          elif [ -n "$new_core" ] && ! cmp -s "$new_core" /tmp/old.core.min.js; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "new_core=$new_core" >> "$GITHUB_OUTPUT"
             echo "Core bundle changed: $new_core"
@@ -215,17 +225,20 @@ jobs:
           git worktree add /tmp/reverse-vx origin/reverse
           python reverse_with_vertex.py    # reads OLD_MIN before overwriting it
           cd /tmp/reverse-vx
-          if git diff --quiet; then echo "Vertex produced no changes."; exit 0; fi
-          branch="reverse-protocol-${{ steps.meta.outputs.tag }}"
+          if git diff --quiet; then echo "Vertex produced no changes (auth/model/parse verified)."; exit 0; fi
+          # On a forced/manual run the meta tag is empty; fall back to a timestamp.
+          tag="${{ steps.meta.outputs.tag }}"
+          [ -z "$tag" ] && tag="manual-$(date -u +'%y%m%d-%H%M')"
+          branch="reverse-protocol-${tag}"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           # stage only protocol artifacts; vertex_report.md is the PR body, not tracked
           git add src/protocol/core.ts src/protocol/commands.ts index.core.min.js
-          git commit -m "reverse: Vertex AI protocol re-derivation from ${{ steps.meta.outputs.tag }}"
+          git commit -m "reverse: Vertex AI protocol re-derivation from ${tag}"
           git push -f origin "$branch"
           gh pr create --base reverse --head "$branch" \
-            --title "Protocol re-derivation from ${{ steps.meta.outputs.tag }} (Vertex AI)" \
+            --title "Protocol re-derivation from ${tag} (Vertex AI)" \
             --body-file vertex_report.md \
             --label artifact-update --label reverse \
             || echo "PR may already exist for $branch"
