@@ -1,0 +1,145 @@
+name: Track Upstream Artifact
+
+on:
+  push:
+    branches:
+      - artifact
+  schedule:
+    - cron: '0 3 */3 * *'   # every 3 days, 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: artifact-tracker
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  track:
+    name: Scrape, diff, release on change
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout artifact branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Scrape upstream into ./app
+        run: python build_offline.py
+
+      - name: Build new manifest
+        run: python artifact_manifest.py build app manifest.new.json
+
+      - name: Diff against committed manifest
+        id: diff
+        run: python artifact_manifest.py diff manifest.json manifest.new.json
+
+      - name: Stop if nothing changed
+        if: steps.diff.outputs.changed != 'true'
+        run: echo "No upstream changes — done."
+
+      # ---- everything below only runs when the artifact changed ----------
+
+      - name: Compute release tag and manifest hash
+        if: steps.diff.outputs.changed == 'true'
+        id: meta
+        run: |
+          echo "tag=artifact-$(date -u +'%y%m%d-%H%M')" >> "$GITHUB_OUTPUT"
+          echo "mhash=$(python -c 'import json;print(json.load(open("manifest.new.json"))["hash"])')" >> "$GITHUB_OUTPUT"
+          echo "count=$(python -c 'import json;print(json.load(open("manifest.new.json"))["count"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Package ./app snapshot
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          cd app && zip -qr "../ajazz-ui-${{ steps.meta.outputs.tag }}.zip" . && cd ..
+          ls -la ajazz-ui-*.zip
+
+      - name: Commit updated manifest to artifact branch
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          mv manifest.new.json manifest.json
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "artifact: update manifest ${{ steps.meta.outputs.tag }} [skip ci]"
+          git push origin HEAD:artifact
+
+      - name: Publish release with the snapshot
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          notes="Upstream UI snapshot.
+
+          - files: ${{ steps.meta.outputs.count }}
+          - manifest hash: \`${{ steps.meta.outputs.mhash }}\`
+          - changes: +${{ steps.diff.outputs.added }} / -${{ steps.diff.outputs.removed }} / ~${{ steps.diff.outputs.modified }}"
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            "ajazz-ui-${{ steps.meta.outputs.tag }}.zip" \
+            "manifest.json" \
+            --title "${{ steps.meta.outputs.tag }}" \
+            --notes "$notes"
+
+      - name: Ensure issue labels exist
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          gh label create artifact-update --color 1d76db --force --description "Upstream artifact changed" || true
+          gh label create reverse --color 5319e7 --force --description "May need changes in the reverse branch" || true
+          gh label create main --color 0e8a16 --force --description "May need changes in the main branch" || true
+
+      - name: Open tracking issue
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          {
+            echo "Upstream artifact changed and was packaged as **${{ steps.meta.outputs.tag }}**."
+            echo ""
+            echo "- Release: ${{ steps.meta.outputs.tag }}"
+            echo "- Manifest hash: \`${{ steps.meta.outputs.mhash }}\`"
+            echo "- Changes: +${{ steps.diff.outputs.added }} / -${{ steps.diff.outputs.removed }} / ~${{ steps.diff.outputs.modified }}"
+            echo ""
+            echo "## Changed files"
+            echo ""
+            cat manifest_diff.md 2>/dev/null || true
+            echo ""
+            echo "### Follow-up"
+            echo "- [ ] \`main\`: auto-PR bumps \`artifact.lock\` — review & merge to rebuild the Electron driver."
+            echo "- [ ] \`reverse\`: re-run \`extract_models.py\` if the model table / protocol bundle changed."
+          } > issue_body.md
+          gh issue create \
+            --title "Artifact update ${{ steps.meta.outputs.tag }}" \
+            --label artifact-update --label reverse --label main \
+            --body-file issue_body.md
+
+      - name: Open PR to main bumping artifact.lock
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -e
+          branch="artifact-bump-${{ steps.meta.outputs.tag }}"
+          git fetch origin main
+          git worktree add /tmp/main-wt origin/main
+          cat > /tmp/main-wt/artifact.lock <<EOF
+          {
+            "release_tag": "${{ steps.meta.outputs.tag }}",
+            "manifest_hash": "${{ steps.meta.outputs.mhash }}",
+            "count": ${{ steps.meta.outputs.count }},
+            "updated": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
+          cd /tmp/main-wt
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add artifact.lock
+          git commit -m "main: bump artifact.lock -> ${{ steps.meta.outputs.tag }}"
+          git push -f origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "Bump artifact.lock -> ${{ steps.meta.outputs.tag }}" \
+            --body "Pins \`main\` to upstream snapshot **${{ steps.meta.outputs.tag }}** (manifest \`${{ steps.meta.outputs.mhash }}\`). Merging triggers an Electron rebuild against this exact snapshot." \
+            || echo "PR may already exist for $branch"
