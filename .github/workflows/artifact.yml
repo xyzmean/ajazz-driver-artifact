@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 'true' only when the Vertex SA key is configured; gates the Vertex steps
+      HAS_GCP_KEY: ${{ secrets.GCP_SA_KEY != '' }}
 
     steps:
       - name: Checkout artifact branch
@@ -172,4 +174,57 @@ jobs:
           gh pr create --base reverse --head "$branch" \
             --title "Regenerate model table from ${{ steps.meta.outputs.tag }}" \
             --body "Auto-regenerated \`models.ts\` / \`models.json\` from upstream snapshot **${{ steps.meta.outputs.tag }}** via \`extract_models.py\`. Typecheck CI verifies it compiles and stays in sync." \
+            || echo "PR may already exist for $branch"
+
+      # ---- Vertex AI protocol re-derivation (only when the core bundle changed) ----
+
+      - name: Detect core bundle change vs reverse
+        if: steps.diff.outputs.changed == 'true'
+        id: core
+        run: |
+          new_core=$(ls -S "$GITHUB_WORKSPACE"/app/assets/index-*.js 2>/dev/null | head -1)
+          git fetch origin reverse
+          git show origin/reverse:index.core.min.js > /tmp/old.core.min.js 2>/dev/null || : > /tmp/old.core.min.js
+          if [ -n "$new_core" ] && ! cmp -s "$new_core" /tmp/old.core.min.js; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "new_core=$new_core" >> "$GITHUB_OUTPUT"
+            echo "Core bundle changed: $new_core"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Core bundle unchanged; skipping Vertex re-reverse."
+          fi
+
+      - name: Authenticate to Google Cloud
+        if: steps.core.outputs.changed == 'true' && env.HAS_GCP_KEY == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Vertex AI re-derive protocol & PR to reverse
+        if: steps.core.outputs.changed == 'true' && env.HAS_GCP_KEY == 'true'
+        env:
+          VERTEX_PROJECT: ${{ vars.GCP_PROJECT }}
+          VERTEX_REGION: ${{ vars.GCP_REGION }}
+          VERTEX_MODEL: ${{ vars.VERTEX_MODEL }}
+          REVERSE_DIR: /tmp/reverse-vx
+          OLD_MIN: /tmp/reverse-vx/index.core.min.js
+          NEW_MIN: ${{ steps.core.outputs.new_core }}
+        run: |
+          set -e
+          pip install --quiet google-cloud-aiplatform
+          git worktree add /tmp/reverse-vx origin/reverse
+          python reverse_with_vertex.py    # reads OLD_MIN before overwriting it
+          cd /tmp/reverse-vx
+          if git diff --quiet; then echo "Vertex produced no changes."; exit 0; fi
+          branch="reverse-protocol-${{ steps.meta.outputs.tag }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A
+          git commit -m "reverse: Vertex AI protocol re-derivation from ${{ steps.meta.outputs.tag }}"
+          git push -f origin "$branch"
+          gh pr create --base reverse --head "$branch" \
+            --title "Protocol re-derivation from ${{ steps.meta.outputs.tag }} (Vertex AI)" \
+            --body-file vertex_report.md \
+            --label artifact-update --label reverse \
             || echo "PR may already exist for $branch"

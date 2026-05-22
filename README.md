@@ -50,8 +50,29 @@ python artifact_manifest.py build app new.json    # манифест снапш�
 python artifact_manifest.py diff manifest.json new.json   # что изменилось
 ```
 
+## Авто-обновление ветки `reverse`
+
+При изменении снапшота пайплайн обновляет `reverse` двумя путями:
+
+1. **Таблица моделей** (детерминированно): `extract_models.py` против нового
+   `layout-default` → авто-PR `reverse-models-<tag>`.
+2. **Протокол** (`core.ts`/`commands.ts`) — если изменилось ядро (`index-*.js`):
+   `reverse_with_vertex.py` шлёт в **Vertex AI (Gemini)** старый бандл + наш
+   старый TS + новый бандл, получает обновлённый протокол + отчёт → авто-PR
+   `reverse-protocol-<tag>`. Это **предложение**, требует ревью; typecheck CI его
+   проверяет. Реверс минифицированного кода детерминированно невозможен — отсюда LLM.
+
+### Настройка Vertex (секреты/переменные репо)
+
+- Secret `GCP_SA_KEY` — JSON-ключ сервис-аккаунта с ролью `roles/aiplatform.user`.
+- Variables `GCP_PROJECT`, `GCP_REGION` (напр. `us-central1`),
+  `VERTEX_MODEL` (напр. `gemini-3.5-flash`).
+
+Если `GCP_SA_KEY` не задан — шаги Vertex не сработают, но остальной пайплайн
+(модели, main-bump PR) не падает.
+
 ## Связь с другими ветками
 
 - **`main`** — потребитель: качает релиз по `artifact.lock` (см. PR от пайплайна).
-- **`reverse`** — при изменении бандла модели/протокол могут требовать ре-экстракта
-  (`extract_models.py`); об этом напоминает issue (метка `reverse`).
+- **`reverse`** — получает авто-PR на таблицу моделей и (через Vertex) на протокол;
+  issue с меткой `reverse` остаётся сводкой изменений.
