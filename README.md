@@ -66,7 +66,7 @@ python artifact_manifest.py diff manifest.json new.json   # что измени�
 
 - Secret `GCP_SA_KEY` — JSON-ключ сервис-аккаунта с ролью `roles/aiplatform.user`.
 - Variables `GCP_PROJECT`, `GCP_REGION` (напр. `us-central1`),
-  `VERTEX_MODEL` (напр. `gemini-3.5-flash`).
+  `VERTEX_MODEL` (напр. `gemini-2.5-flash` — должен быть реальный id Vertex).
 
 Если `GCP_SA_KEY` не задан — шаги Vertex не сработают, но остальной пайплайн
 (модели, main-bump PR) не падает.

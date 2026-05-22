@@ -11,7 +11,7 @@ for a human-reviewed PR; it is never merged blindly.
 
 Env:
   VERTEX_PROJECT, VERTEX_REGION   GCP project / location
-  VERTEX_MODEL                    e.g. gemini-3.5-flash
+  VERTEX_MODEL                    e.g. gemini-2.5-flash (must be a real Vertex id)
   REVERSE_DIR                     path to the reverse worktree to write into
   OLD_MIN, NEW_MIN                paths to old/new minified core bundles
 Auth: Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS), set by
@@ -77,7 +77,7 @@ Rules:
 def main():
     project = os.environ["VERTEX_PROJECT"]
     region = os.environ.get("VERTEX_REGION") or "us-central1"
-    model_id = os.environ.get("VERTEX_MODEL") or "gemini-3.5-flash"
+    model_id = os.environ.get("VERTEX_MODEL") or "gemini-2.5-flash"
     reverse_dir = os.environ["REVERSE_DIR"]
     old_min_path = os.environ["OLD_MIN"]
     new_min_path = os.environ["NEW_MIN"]
