@@ -76,7 +76,7 @@ Rules:
 
 def main():
     project = os.environ["VERTEX_PROJECT"]
-    region = os.environ.get("VERTEX_REGION") or "us-central1"
+    region = os.environ.get("VERTEX_REGION") or "global"
     model_id = os.environ.get("VERTEX_MODEL") or "gemini-3.5-flash"
     reverse_dir = os.environ["REVERSE_DIR"]
     old_min_path = os.environ["OLD_MIN"]
