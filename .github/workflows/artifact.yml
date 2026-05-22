@@ -220,7 +220,8 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          git add -A
+          # stage only protocol artifacts; vertex_report.md is the PR body, not tracked
+          git add src/protocol/core.ts src/protocol/commands.ts index.core.min.js
           git commit -m "reverse: Vertex AI protocol re-derivation from ${{ steps.meta.outputs.tag }}"
           git push -f origin "$branch"
           gh pr create --base reverse --head "$branch" \
