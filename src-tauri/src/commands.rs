@@ -35,7 +35,7 @@ pub fn list_devices(state: tauri::State<AppState>) -> Result<Vec<DeviceSummary>,
         let model = models::find(vid, pid);
 
         let usage_page = d.usage_page();
-        if usage_page != protocol::USAGE_PAGE {
+        if !protocol::USAGE_PAGES.contains(&usage_page) {
             continue;
         }
 

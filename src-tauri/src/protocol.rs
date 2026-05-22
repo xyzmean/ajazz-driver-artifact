@@ -15,7 +15,7 @@ pub const REQUEST_HEADER: u8 = 0xAA;
 pub const RESPONSE_HEADER: u8 = 0x55;
 pub const HEADER_SIZE: usize = 8;
 pub const REPORT_SIZE: usize = 32;
-pub const USAGE_PAGE: u16 = 0xFF67;
+pub const USAGE_PAGES: &[u16] = &[0xFF67, 0xFF68];
 
 /// Command opcodes (subset of CMD from core.ts; extend as features are ported).
 #[allow(dead_code)] // several opcodes are placeholders for not-yet-ported features
