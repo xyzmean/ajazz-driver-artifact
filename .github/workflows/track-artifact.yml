@@ -1,0 +1,248 @@
+name: Track Upstream Artifact
+
+# This repo (ajazz-driver-artifact) is the upstream tracker. Releases and the
+# tracking issue are created HERE (same-repo, default GITHUB_TOKEN). The bump PR
+# to ajazz-driver-electron and the model/protocol PRs to ajazz-driver-reverse are
+# cross-repo and need a PAT in secret CROSS_REPO_TOKEN (Contents+PRs: read/write
+# on those repos). Without it, releases/issue still work; cross-repo steps skip.
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 3 */3 * *'   # every 3 days, 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      force_vertex:
+        description: 'Run the Vertex protocol re-derivation even if the bundle is unchanged (test the GCP wiring; no release/PR is published).'
+        type: boolean
+        default: false
+
+concurrency:
+  group: artifact-tracker
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  track:
+    name: Scrape, diff, release on change
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}              # same-repo gh (release, issue)
+      CROSS_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}       # cross-repo push + PRs
+      HAS_CROSS: ${{ secrets.CROSS_REPO_TOKEN != '' }}
+      HAS_GCP_KEY: ${{ secrets.GCP_SA_KEY != '' }}
+      ELECTRON_REPO: xyzmean/ajazz-driver-electron
+      REVERSE_REPO: xyzmean/ajazz-driver-reverse
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Scrape upstream into ./app
+        run: python build_offline.py
+
+      - name: Build new manifest
+        run: python artifact_manifest.py build app manifest.new.json
+
+      - name: Diff against committed manifest
+        id: diff
+        run: python artifact_manifest.py diff manifest.json manifest.new.json
+
+      - name: Stop if nothing changed
+        if: steps.diff.outputs.changed != 'true'
+        run: echo "No upstream changes — done."
+
+      # ---- everything below only runs when the artifact changed ----------
+
+      - name: Compute release tag and manifest hash
+        if: steps.diff.outputs.changed == 'true'
+        id: meta
+        run: |
+          echo "tag=artifact-$(date -u +'%y%m%d-%H%M')" >> "$GITHUB_OUTPUT"
+          echo "mhash=$(python -c 'import json;print(json.load(open("manifest.new.json"))["hash"])')" >> "$GITHUB_OUTPUT"
+          echo "count=$(python -c 'import json;print(json.load(open("manifest.new.json"))["count"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Package ./app snapshot
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          cd app && zip -qr "../ajazz-ui-${{ steps.meta.outputs.tag }}.zip" . && cd ..
+          ls -la ajazz-ui-*.zip
+
+      - name: Commit updated manifest to this repo
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          mv manifest.new.json manifest.json
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "artifact: update manifest ${{ steps.meta.outputs.tag }} [skip ci]"
+          git push origin HEAD:main
+
+      - name: Publish release with the snapshot
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          notes="Upstream UI snapshot.
+
+          - files: ${{ steps.meta.outputs.count }}
+          - manifest hash: \`${{ steps.meta.outputs.mhash }}\`
+          - changes: +${{ steps.diff.outputs.added }} / -${{ steps.diff.outputs.removed }} / ~${{ steps.diff.outputs.modified }}"
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            "ajazz-ui-${{ steps.meta.outputs.tag }}.zip" \
+            "manifest.json" \
+            --title "${{ steps.meta.outputs.tag }}" \
+            --notes "$notes"
+
+      - name: Ensure issue labels exist
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          gh label create artifact-update --color 1d76db --force --description "Upstream artifact changed" || true
+          gh label create reverse --color 5319e7 --force --description "May need changes in the reverse driver" || true
+          gh label create electron --color 0e8a16 --force --description "May need changes in the electron wrapper" || true
+
+      - name: Open tracking issue
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          {
+            echo "Upstream artifact changed and was packaged as **${{ steps.meta.outputs.tag }}**."
+            echo ""
+            echo "- Release: ${{ steps.meta.outputs.tag }}"
+            echo "- Manifest hash: \`${{ steps.meta.outputs.mhash }}\`"
+            echo "- Changes: +${{ steps.diff.outputs.added }} / -${{ steps.diff.outputs.removed }} / ~${{ steps.diff.outputs.modified }}"
+            echo ""
+            echo "## Changed files"
+            echo ""
+            cat manifest_diff.md 2>/dev/null || true
+            echo ""
+            echo "### Follow-up (cross-repo PRs auto-opened when CROSS_REPO_TOKEN is set)"
+            echo "- [ ] \`ajazz-driver-electron\`: bump \`artifact.lock\` PR — review & merge to rebuild."
+            echo "- [ ] \`ajazz-driver-reverse\`: model-table PR (auto) and, if the core bundle changed, a Vertex protocol PR — review & merge."
+          } > issue_body.md
+          gh issue create \
+            --title "Artifact update ${{ steps.meta.outputs.tag }}" \
+            --label artifact-update --label reverse --label electron \
+            --body-file issue_body.md
+
+      - name: Warn if cross-repo token missing
+        if: steps.diff.outputs.changed == 'true' && env.HAS_CROSS != 'true'
+        run: echo "::warning::CROSS_REPO_TOKEN not set — skipping cross-repo PRs to electron/reverse. Release + issue were still created."
+
+      - name: Open PR to electron bumping artifact.lock
+        if: steps.diff.outputs.changed == 'true' && env.HAS_CROSS == 'true'
+        run: |
+          set -e
+          branch="artifact-bump-${{ steps.meta.outputs.tag }}"
+          git clone "https://x-access-token:${CROSS_TOKEN}@github.com/${ELECTRON_REPO}.git" /tmp/electron
+          cat > /tmp/electron/artifact.lock <<EOF
+          {
+            "release_tag": "${{ steps.meta.outputs.tag }}",
+            "manifest_hash": "${{ steps.meta.outputs.mhash }}",
+            "count": ${{ steps.meta.outputs.count }},
+            "updated": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
+          cd /tmp/electron
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add artifact.lock
+          git commit -m "electron: bump artifact.lock -> ${{ steps.meta.outputs.tag }}"
+          git push -f origin "$branch"
+          GH_TOKEN="$CROSS_TOKEN" gh pr create --repo "$ELECTRON_REPO" --base main --head "$branch" \
+            --title "Bump artifact.lock -> ${{ steps.meta.outputs.tag }}" \
+            --body "Pins the Electron build to upstream snapshot **${{ steps.meta.outputs.tag }}** (manifest \`${{ steps.meta.outputs.mhash }}\`). Merging triggers a rebuild against this exact snapshot." \
+            || echo "PR may already exist for $branch"
+
+      - name: Open PR to reverse if the model table changed
+        if: steps.diff.outputs.changed == 'true' && env.HAS_CROSS == 'true'
+        run: |
+          set -e
+          ld=$(ls "$GITHUB_WORKSPACE"/app/assets/layout-default-*.js 2>/dev/null | head -1)
+          if [ -z "$ld" ]; then echo "No layout-default chunk; skipping."; exit 0; fi
+          git clone "https://x-access-token:${CROSS_TOKEN}@github.com/${REVERSE_REPO}.git" /tmp/reverse-models
+          cd /tmp/reverse-models
+          python3 extract_models.py "$ld"
+          if git diff --quiet -- src/protocol/models.ts models.json; then
+            echo "Model table unchanged; no PR needed."; exit 0
+          fi
+          branch="reverse-models-${{ steps.meta.outputs.tag }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add src/protocol/models.ts models.json
+          git commit -m "reverse: regenerate model table from ${{ steps.meta.outputs.tag }}"
+          git push -f origin "$branch"
+          GH_TOKEN="$CROSS_TOKEN" gh pr create --repo "$REVERSE_REPO" --base main --head "$branch" \
+            --title "Regenerate model table from ${{ steps.meta.outputs.tag }}" \
+            --body "Auto-regenerated \`models.ts\` / \`models.json\` from upstream snapshot **${{ steps.meta.outputs.tag }}** via \`extract_models.py\`. Typecheck CI verifies it." \
+            || echo "PR may already exist for $branch"
+
+      # ---- Vertex AI protocol re-derivation (only when the core bundle changed) ----
+
+      - name: Detect core bundle change vs reverse
+        if: steps.diff.outputs.changed == 'true' || github.event.inputs.force_vertex == 'true'
+        id: core
+        run: |
+          new_core=$(ls -S "$GITHUB_WORKSPACE"/app/assets/index-*.js 2>/dev/null | head -1)
+          # reverse repo is public — read its committed bundle directly
+          curl -fsSL "https://raw.githubusercontent.com/${REVERSE_REPO}/main/index.core.min.js" -o /tmp/old.core.min.js 2>/dev/null || : > /tmp/old.core.min.js
+          forced="${{ github.event.inputs.force_vertex }}"
+          if [ "$forced" = "true" ] && [ -n "$new_core" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "new_core=$new_core" >> "$GITHUB_OUTPUT"
+            echo "force_vertex: running Vertex on $new_core (no PR unless code differs)."
+          elif [ -n "$new_core" ] && ! cmp -s "$new_core" /tmp/old.core.min.js; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "new_core=$new_core" >> "$GITHUB_OUTPUT"
+            echo "Core bundle changed: $new_core"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Core bundle unchanged; skipping Vertex."
+          fi
+
+      - name: Authenticate to Google Cloud
+        if: steps.core.outputs.changed == 'true' && env.HAS_GCP_KEY == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Vertex AI re-derive protocol & PR to reverse
+        if: steps.core.outputs.changed == 'true' && env.HAS_GCP_KEY == 'true'
+        env:
+          VERTEX_PROJECT: ${{ vars.GCP_PROJECT }}
+          VERTEX_REGION: ${{ vars.GCP_REGION }}
+          VERTEX_MODEL: ${{ vars.VERTEX_MODEL }}
+          REVERSE_DIR: /tmp/reverse-vx
+          OLD_MIN: /tmp/reverse-vx/index.core.min.js
+          NEW_MIN: ${{ steps.core.outputs.new_core }}
+        run: |
+          set -e
+          pip install --quiet google-cloud-aiplatform
+          # anonymous public clone is enough to read core.ts/commands.ts for the prompt
+          git clone --depth 1 "https://github.com/${REVERSE_REPO}.git" /tmp/reverse-vx
+          python reverse_with_vertex.py    # reads OLD_MIN before overwriting it
+          cd /tmp/reverse-vx
+          if git diff --quiet; then echo "Vertex produced no changes (auth/model/parse verified)."; exit 0; fi
+          if [ "$HAS_CROSS" != "true" ]; then
+            echo "::warning::Protocol changed but CROSS_REPO_TOKEN is unset — cannot open the reverse PR."; exit 0
+          fi
+          tag="${{ steps.meta.outputs.tag }}"
+          [ -z "$tag" ] && tag="manual-$(date -u +'%y%m%d-%H%M')"
+          branch="reverse-protocol-${tag}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add src/protocol/core.ts src/protocol/commands.ts index.core.min.js
+          git commit -m "reverse: Vertex AI protocol re-derivation from ${tag}"
+          git push "https://x-access-token:${CROSS_TOKEN}@github.com/${REVERSE_REPO}.git" "$branch"
+          GH_TOKEN="$CROSS_TOKEN" gh pr create --repo "$REVERSE_REPO" --base main --head "$branch" \
+            --title "Protocol re-derivation from ${tag} (Vertex AI)" \
+            --body-file vertex_report.md \
+            || echo "PR may already exist for $branch"
