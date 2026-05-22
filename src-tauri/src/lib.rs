@@ -22,7 +22,11 @@ pub fn run() {
             commands::set_led_effect,
             commands::get_magnetic_rt,
             commands::set_magnetic_rt,
-            commands::factory_reset
+            commands::factory_reset,
+            commands::get_key_data,
+            commands::set_key_data,
+            commands::set_music_data,
+            commands::frontend_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

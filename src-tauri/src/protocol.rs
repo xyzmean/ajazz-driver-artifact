@@ -15,7 +15,7 @@ pub const REQUEST_HEADER: u8 = 0xAA;
 pub const RESPONSE_HEADER: u8 = 0x55;
 pub const HEADER_SIZE: usize = 8;
 pub const REPORT_SIZE: usize = 32;
-pub const USAGE_PAGES: &[u16] = &[0xFF67, 0xFF68];
+pub const USAGE_PAGES: &[u16] = &[0xFF60, 0xFF67, 0xFF68];
 
 /// Command opcodes (subset of CMD from core.ts; extend as features are ported).
 #[allow(dead_code)] // several opcodes are placeholders for not-yet-ported features
@@ -26,9 +26,11 @@ pub mod cmd {
     pub const GET_LED_EFFECT: u8 = 19;
     pub const GET_MAGNETIC_AXIS_RT: u8 = 23;
     pub const SET_GAME_MODE: u8 = 33;
+    pub const SET_KEY: u8 = 34;
     pub const SET_LED_EFFECT: u8 = 35;
     pub const SET_MAGNETIC_AXIS_RT: u8 = 39;
     pub const SET_FACTORY_RESET: u8 = 15;
+    pub const SET_MUSIC_DATA: u8 = 53;
 }
 
 /// Build one 32-byte request packet (port of `buildPacket` / minified `P`).
@@ -266,6 +268,8 @@ pub fn encode_led_effect(v: &LedEffect) -> [u8; 16] {
     e[10] = v.speed;
     e[11] = v.direction;
     e[12] = v.effect_mode_type;
+    e[14] = 170; // checkCodeL
+    e[15] = 85;  // checkCodeH
     e
 }
 
@@ -329,3 +333,76 @@ pub fn encode_magnetic_rt(v: &[MagneticAxisRT], rt_precision: u8) -> [u8; 1024] 
     }
     e
 }
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RawKeyEntry {
+    pub page_type: u8,
+    pub param1: u8,
+    pub param2: u8,
+    pub param3: u8,
+}
+
+pub fn parse_key_data(e: &[u8]) -> Vec<RawKeyEntry> {
+    let mut out = Vec::with_capacity(128);
+    for i in 0..128 {
+        let b = i * 4;
+        if b + 4 <= e.len() {
+            out.push(RawKeyEntry {
+                page_type: e[b],
+                param1: e[b + 1],
+                param2: e[b + 2],
+                param3: e[b + 3],
+            });
+        } else {
+            out.push(RawKeyEntry {
+                page_type: 0,
+                param1: 0,
+                param2: 0,
+                param3: 0,
+            });
+        }
+    }
+    out
+}
+
+pub fn encode_key_data(v: &[RawKeyEntry]) -> [u8; 512] {
+    let mut e = [0u8; 512];
+    for i in 0..128.min(v.len()) {
+        let b = i * 4;
+        let item = &v[i];
+        e[b] = item.page_type;
+        e[b + 1] = item.param1;
+        e[b + 2] = item.param2;
+        e[b + 3] = item.param3;
+    }
+    e
+}
+
+pub fn send_music_data(device: &HidDevice, music_type: u8, spectrum: &[u8]) -> Result<(), String> {
+    let mut buf = [0u8; REPORT_SIZE];
+    buf[0] = REQUEST_HEADER;
+    buf[1] = cmd::SET_MUSIC_DATA;
+    buf[2] = 0; // package ID
+    buf[3] = music_type;
+    
+    // Copy spectrum amplitudes into buf[4..25] (up to 21 bytes)
+    let n = spectrum.len().min(21);
+    buf[4..4 + n].copy_from_slice(&spectrum[..n]);
+    
+    // Calculate checksum: buf[31] = sum(buf[0..30]) & 0xFF
+    let mut sum: u32 = 0;
+    for i in 0..31 {
+        sum += buf[i] as u32;
+    }
+    buf[31] = (sum & 0xFF) as u8;
+    
+    // Send report
+    let mut out = [0u8; REPORT_SIZE + 1];
+    out[0] = REPORT_ID;
+    out[1..].copy_from_slice(&buf);
+    device.write(&out).map_err(|e| format!("write failed: {e}"))?;
+    
+    Ok(())
+}
+
