@@ -32,9 +32,15 @@ pub fn list_devices(state: tauri::State<AppState>) -> Result<Vec<DeviceSummary>,
         let vid = d.vendor_id();
         let pid = d.product_id();
         let model = models::find(vid, pid);
-        if d.usage_page() != protocol::USAGE_PAGE && model.is_none() {
+
+        let usage_page = d.usage_page();
+        if usage_page != 0 && usage_page != protocol::USAGE_PAGE {
             continue;
         }
+        if usage_page == 0 && model.is_none() {
+            continue;
+        }
+
         let path = d.path().to_string_lossy().into_owned();
         if !seen.insert(path.clone()) {
             continue;
