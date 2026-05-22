@@ -6,6 +6,10 @@ on:
       - main
       - master
     # artifact.lock bumps (auto-PR from the artifact pipeline) land here on merge
+  pull_request:
+    branches:
+      - main
+    # verifies a bump PR (new pinned snapshot) builds before merge
   workflow_dispatch:
 
 permissions:
@@ -70,7 +74,18 @@ jobs:
         shell: pwsh
         run: echo "tag=$((Get-Date).ToUniversalTime().ToString('yyMMdd-HHmm'))" >> $env:GITHUB_OUTPUT
 
+      # Always expose the build as a downloadable workflow artifact — on a PR this
+      # is the verification deliverable (you can grab and run the .exe before merge).
+      - name: Upload build as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ajazz-local-driver-${{ steps.tag.outputs.tag }}
+          path: ajazz-local-driver.zip
+          retention-days: 14
+
+      # Publish a release only for real builds on main, never for PR verification.
       - name: Publish driver to GitHub Release
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
