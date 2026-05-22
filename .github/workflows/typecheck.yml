@@ -1,0 +1,46 @@
+name: Typecheck reverse driver
+
+on:
+  push:
+    branches:
+      - reverse
+  pull_request:
+    branches:
+      - reverse
+    # verifies auto-PRs that regenerate models.ts/models.json from a new artifact
+  workflow_dispatch:
+
+jobs:
+  typecheck:
+    name: tsc --noEmit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Sanity-check models.json parity with models.ts
+        run: |
+          node -e '
+            const fs = require("fs");
+            const ts = fs.readFileSync("src/protocol/models.ts", "utf8");
+            const m = ts.match(/KEYBOARD_MODELS: KeyboardModel\[\] = (\[[\s\S]*?\]);/);
+            if (!m) { console.error("could not find KEYBOARD_MODELS in models.ts"); process.exit(1); }
+            const fromTs = JSON.stringify(JSON.parse(m[1]));
+            const fromJson = JSON.stringify(JSON.parse(fs.readFileSync("models.json", "utf8")));
+            if (fromTs !== fromJson) { console.error("models.json is out of sync with models.ts"); process.exit(1); }
+            console.log("models.json matches models.ts (" + JSON.parse(fromJson).length + " models)");
+          '
