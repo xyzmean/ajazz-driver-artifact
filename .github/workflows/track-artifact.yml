@@ -48,11 +48,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Scrape upstream into ./app
-        run: python build_offline.py
+      - name: Scrape upstream (DriveAll & Hub)
+        run: |
+          python build_offline.py
+          python build_hub_offline.py
 
       - name: Build new manifest
-        run: python artifact_manifest.py build app manifest.new.json
+        run: python artifact_manifest.py build app,app-hub manifest.new.json
 
       - name: Diff against committed manifest
         id: diff
@@ -72,10 +74,11 @@ jobs:
           echo "mhash=$(python -c 'import json;print(json.load(open("manifest.new.json"))["hash"])')" >> "$GITHUB_OUTPUT"
           echo "count=$(python -c 'import json;print(json.load(open("manifest.new.json"))["count"])')" >> "$GITHUB_OUTPUT"
 
-      - name: Package ./app snapshot
+      - name: Package snapshots
         if: steps.diff.outputs.changed == 'true'
         run: |
           cd app && zip -qr "../ajazz-ui-${{ steps.meta.outputs.tag }}.zip" . && cd ..
+          cd app-hub && zip -qr "../ajazz-ui-hub-${{ steps.meta.outputs.tag }}.zip" . && cd ..
           ls -la ajazz-ui-*.zip
 
       - name: Commit updated manifest to this repo
@@ -91,13 +94,13 @@ jobs:
       - name: Publish release with the snapshot
         if: steps.diff.outputs.changed == 'true'
         run: |
-          notes="Upstream UI snapshot.
+          notes="Upstream UI snapshots (universal and hub).
 
           - files: ${{ steps.meta.outputs.count }}
           - manifest hash: \`${{ steps.meta.outputs.mhash }}\`
           - changes: +${{ steps.diff.outputs.added }} / -${{ steps.diff.outputs.removed }} / ~${{ steps.diff.outputs.modified }}"
           gh release create "${{ steps.meta.outputs.tag }}" \
-            "ajazz-ui-${{ steps.meta.outputs.tag }}.zip" \
+            ajazz-ui-*.zip \
             "manifest.json" \
             --title "${{ steps.meta.outputs.tag }}" \
             --notes "$notes"
@@ -167,10 +170,23 @@ jobs:
         run: |
           set -e
           ld=$(ls "$GITHUB_WORKSPACE"/app/assets/layout-default-*.js 2>/dev/null | head -1)
-          if [ -z "$ld" ]; then echo "No layout-default chunk; skipping."; exit 0; fi
+          hj=$(ls "$GITHUB_WORKSPACE"/app-hub/js/index-*.js 2>/dev/null | head -1)
+          if [ -z "$ld" ] && [ -z "$hj" ]; then
+            echo "Neither layout-default nor index found; skipping model extraction."
+            exit 0
+          fi
           git clone "https://x-access-token:${CROSS_TOKEN}@github.com/${REVERSE_REPO}.git" /tmp/reverse-models
           cd /tmp/reverse-models
-          python3 extract_models.py "$ld"
+          if [ -n "$ld" ]; then
+            python3 extract_models.py "$ld"
+          else
+            echo "No layout-default chunk; skipping DriveAll model extraction."
+          fi
+          if [ -n "$hj" ]; then
+            python3 extract_hub_models.py "$hj"
+          else
+            echo "No Hub index chunk; skipping Hub model extraction."
+          fi
           if git diff --quiet -- src/protocol/models.ts models.json; then
             echo "Model table unchanged; no PR needed."; exit 0
           fi
@@ -183,7 +199,7 @@ jobs:
           git push -f origin "$branch"
           GH_TOKEN="$CROSS_TOKEN" gh pr create --repo "$REVERSE_REPO" --base main --head "$branch" \
             --title "Regenerate model table from ${{ steps.meta.outputs.tag }}" \
-            --body "Auto-regenerated \`models.ts\` / \`models.json\` from upstream snapshot **${{ steps.meta.outputs.tag }}** via \`extract_models.py\`. Typecheck CI verifies it." \
+            --body "Auto-regenerated \`models.ts\` / \`models.json\` from upstream snapshots via \`extract_models.py\` and \`extract_hub_models.py\`. Typecheck CI verifies it." \
             || echo "PR may already exist for $branch"
 
       # ---- Vertex AI protocol re-derivation (only when the core bundle changed) ----

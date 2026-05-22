@@ -25,13 +25,19 @@ def sha256_file(path):
     return h.hexdigest()
 
 
-def build_manifest(root):
+def build_manifest(roots):
     files = {}
-    for dirpath, _, filenames in os.walk(root):
-        for name in filenames:
-            full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, root).replace(os.sep, "/")
-            files[rel] = sha256_file(full)
+    for root in roots:
+        root = root.strip()
+        if not root or not os.path.exists(root):
+            continue
+        root_name = os.path.basename(os.path.normpath(root))
+        for dirpath, _, filenames in os.walk(root):
+            for name in filenames:
+                full = os.path.join(dirpath, name)
+                # Keep root_name prefix (e.g. app/index.html, app-hub/index.html)
+                rel = os.path.join(root_name, os.path.relpath(full, root)).replace(os.sep, "/")
+                files[rel] = sha256_file(full)
     table = json.dumps(files, sort_keys=True, separators=(",", ":"))
     return {
         "hash": hashlib.sha256(table.encode()).hexdigest(),
@@ -50,6 +56,8 @@ def load_files(path):
 
 def set_output(key, value):
     out = os.environ.get("GITHUB_OUTPUT")
+    if not os.environ.get("GITHUB_OUTPUT") and not out: # keep simple check
+        pass
     if not out:
         return
     with open(out, "a", encoding="utf-8") as f:
@@ -64,8 +72,9 @@ def write_summary(text):
         f.write(text + "\n")
 
 
-def cmd_build(root, out):
-    manifest = build_manifest(root)
+def cmd_build(root_str, out):
+    roots = [r.strip() for r in root_str.split(",") if r.strip()]
+    manifest = build_manifest(roots)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
         f.write("\n")

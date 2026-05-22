@@ -9,12 +9,13 @@
 
 ```
 ajazz-driver-artifact/
-├── build_offline.py        discovery-скрейпер: рекурсивный fixpoint-обход
+├── build_offline.py        discovery-скрейпер для ajazz.driveall.cn: рекурсивный fixpoint-обход
 │                           (index.html → assets → import("./…") → langs/img),
 │                           новые чанки подхватываются автоматически
-├── artifact_manifest.py    build/diff манифеста sha256 по каждому файлу
+├── build_hub_offline.py    discovery-скрейпер для www.ajazz-hub.com (AK980 PRO)
+├── artifact_manifest.py    build/diff манифеста sha256 по каждому файлу (поддерживает мульти-директории)
 ├── reverse_with_vertex.py  реверс протокола через Vertex AI (Gemini)
-├── manifest.json           закоммиченный базовый манифест (эталон для diff)
+├── manifest.json           закоммиченный базовый манифест (эталон для diff, содержит префиксы app/ и app-hub/)
 └── .github/workflows/track-artifact.yml   пайплайн (cron раз в 3 дня + ручной)
 ```
 
@@ -23,14 +24,15 @@ ajazz-driver-artifact/
 Триггеры: cron `0 3 */3 * *` (раз в 3 дня), ручной запуск (с входом
 `force_vertex`), push в `main`.
 
-1. `build_offline.py` скрейпит сайт в `./app` (рекурсивно — ловит новые файлы).
-2. `artifact_manifest.py build` считает sha256 каждого файла → `manifest.new.json`.
+1. `build_offline.py` скрейпит DriveAll сайт в `./app`, а `build_hub_offline.py` скрейпит Hub сайт в `./app-hub`.
+2. `artifact_manifest.py build app,app-hub manifest.new.json` считает sha256 каждого файла с префиксом папки.
 3. `artifact_manifest.py diff` сравнивает с закоммиченным `manifest.json`.
 4. **Если отличий нет** — пайплайн завершается.
 5. **Если есть отличия:**
    - `./app` пакуется в `ajazz-ui-ггммдд-ччмм.zip`;
+   - `./app-hub` пакуется в `ajazz-ui-hub-ггммдд-ччмм.zip`;
    - обновлённый `manifest.json` коммитится обратно в этот репо (`[skip ci]`);
-   - публикуется **релиз** `artifact-ггммдд-ччмм` (zip снапшота + `manifest.json`);
+   - публикуется **релиз** `artifact-ггммдд-ччмм` (оба zip-снапшота + `manifest.json`);
    - заводится **issue** (здесь же) со списком added/removed/modified файлов;
    - открывается **кросс-репный PR в `ajazz-driver-electron`**, бампающий
      `artifact.lock` — мерж пересобирает Electron-драйвер на этот снапшот;

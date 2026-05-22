@@ -1,5 +1,6 @@
 # Scraped snapshot (packaged into a release, never committed)
 /app/
+/app-hub/
 
 # Pipeline scratch
 manifest.new.json
