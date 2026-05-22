@@ -110,7 +110,7 @@ jobs:
             echo ""
             echo "### Follow-up"
             echo "- [ ] \`main\`: auto-PR bumps \`artifact.lock\` — review & merge to rebuild the Electron driver."
-            echo "- [ ] \`reverse\`: re-run \`extract_models.py\` if the model table / protocol bundle changed."
+            echo "- [ ] \`reverse\`: if the model table changed, an auto-PR regenerates it; review & merge. The protocol bundle (\`index.core.*\`) still needs manual review on big upstream changes."
           } > issue_body.md
           gh issue create \
             --title "Artifact update ${{ steps.meta.outputs.tag }}" \
@@ -142,4 +142,34 @@ jobs:
           gh pr create --base main --head "$branch" \
             --title "Bump artifact.lock -> ${{ steps.meta.outputs.tag }}" \
             --body "Pins \`main\` to upstream snapshot **${{ steps.meta.outputs.tag }}** (manifest \`${{ steps.meta.outputs.mhash }}\`). Merging triggers an Electron rebuild against this exact snapshot." \
+            || echo "PR may already exist for $branch"
+
+      - name: Open PR to reverse if the model table changed
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -e
+          ld=$(ls "$GITHUB_WORKSPACE"/app/assets/layout-default-*.js 2>/dev/null | head -1)
+          if [ -z "$ld" ]; then
+            echo "No layout-default chunk in the snapshot; skipping reverse update."
+            exit 0
+          fi
+          git fetch origin reverse
+          git worktree add /tmp/reverse-wt origin/reverse
+          cd /tmp/reverse-wt
+          # reverse's own extractor regenerates src/protocol/models.ts + models.json
+          python3 extract_models.py "$ld"
+          if git diff --quiet -- src/protocol/models.ts models.json; then
+            echo "Model table unchanged in reverse; no PR needed."
+            exit 0
+          fi
+          branch="reverse-models-${{ steps.meta.outputs.tag }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add src/protocol/models.ts models.json
+          git commit -m "reverse: regenerate model table from ${{ steps.meta.outputs.tag }}"
+          git push -f origin "$branch"
+          gh pr create --base reverse --head "$branch" \
+            --title "Regenerate model table from ${{ steps.meta.outputs.tag }}" \
+            --body "Auto-regenerated \`models.ts\` / \`models.json\` from upstream snapshot **${{ steps.meta.outputs.tag }}** via \`extract_models.py\`. Typecheck CI verifies it compiles and stays in sync." \
             || echo "PR may already exist for $branch"
