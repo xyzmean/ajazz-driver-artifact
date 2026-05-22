@@ -1,7 +1,7 @@
 {
-  "release_tag": "",
-  "manifest_hash": "",
-  "count": 0,
-  "updated": "",
+  "release_tag": "artifact-260522-1029",
+  "manifest_hash": "97655c604e90134cf47c15354a7d59afebef063847c1cdd59e906683be24653b",
+  "count": 74,
+  "updated": "2026-05-22T10:29:00Z",
   "_note": "Pinned by the artifact pipeline via auto-PR. Empty release_tag means the build falls back to the latest artifact-* release."
 }
