@@ -1,6 +1,6 @@
 {
-  "hash": "23bfa9c9ea6856ab9cd29cd9ceb3f6ebc1df00ee43e81644100ed186c40ac667",
-  "count": 105,
+  "hash": "c5fc9827133a69b32032818e21f591958b0f1a384febab6da206e25abdbc2a13",
+  "count": 106,
   "files": {
     "app-hub/assets/atkeyboard-Bs3u-Qd8.png": "e6f7ee58902192c9b955e85be44c112d3649468009c7f7c3db7b60c656ef1b28",
     "app-hub/assets/index-D37W5el2.css": "4629299b4a93c2882659fc6e0f29f8ede4bd523b5b31aa3d4d47ba7565cb1762",
@@ -90,6 +90,7 @@
     "app/assets/worker-A4ZT02e5.js": "25641a3b7197cb1bd48e7a4f82499171e906845c5e447bde4f12e568b8c64472",
     "app/cache/config/img/key_switch.png": "8977d6167a64d47191dfbb199419ba0de8c3ae78d43eaebc01e72aae02b5dba6",
     "app/cache/config/logo/ajazz/logo.png": "84176b2023771b1c6ab7f2ad5ef292eec60a80e87b3a80a96d22305e994ce5d8",
+    "app/cache/static/keyboards/kb_bg.png": "5a3634f1fb23608e17d3de2d9ce7965f94a3647b4eb5f9a8910e14237168b0fd",
     "app/index.html": "c981129a86f9192bb3d7d4ee0e4b80c4ad5ed72a1d544dbb19b5435f93b76994",
     "app/langs/ar.json": "ef25d4cb864ac216b8ec136396c561d42bd052299bdfdb51f6e4661db72e689f",
     "app/langs/de.json": "b422a9edf537143ceb558d32f172036853c390199c64f4cc48f441f37fec8241",
